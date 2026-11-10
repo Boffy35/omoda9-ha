@@ -1188,11 +1188,16 @@ class Omoda9Coordinator(DataUpdateCoordinator):
         # the ACCOUNT's, so every vehicle of this login uses the same two objects. Sharing
         # the lockout also serialises taskId mints across the account, which matters because
         # minting sets the account's single "active vehicle" (setVecDefault).
-        if self._access is None:
-            self._access = acquire_access(self._registry("access"), str(self.tuserid),
-                                          self.token_path, self.vin)
-        ctx.stato.lock_token = self._access.token_lock
-        ctx.stato.lockout = self._access.lockout
+        # Fail open: without a Home Assistant registry to hold the account state (a
+        # partially built coordinator, as some tests make), the vehicle keeps its own lock
+        # and lockout - exactly the behaviour before account-level sharing existed.
+        access = getattr(self, "_access", None)
+        if access is None and isinstance(getattr(self.hass, "data", None), dict):
+            access = self._access = acquire_access(
+                self._registry("access"), str(self.tuserid), self.token_path, self.vin)
+        if access is not None:
+            ctx.stato.lock_token = access.token_lock
+            ctx.stato.lockout = access.lockout
         return ctx
 
     @property
