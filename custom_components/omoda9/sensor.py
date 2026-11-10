@@ -39,6 +39,7 @@ from homeassistant.util import dt as dt_util
 from .const import CHARGE_ENERGY_MAX_GAP, DOMAIN, FIELDS_AS_RICH_ENTITY
 from .coordinator import SENSORS
 from .entity import Omoda9Entity, in_zona_casa
+from .status_text import to_english, value_to_english, wants_english
 
 
 # ───────────────────────── sensori "realtime" (Round B) ─────────────────────────
@@ -492,12 +493,30 @@ class _Omoda9RestoreSensor(Omoda9Entity, RestoreSensor):
         live = self._live_value()
         if live is not None:
             self._ultimo_noto = live
-            return live
-        return self._ultimo_noto if self._ultimo_noto is not None else self._restored
+            return self._in_entry_language(live)
+        return self._in_entry_language(
+            self._ultimo_noto if self._ultimo_noto is not None else self._restored)
+
+    # Which kind of Italian text this sensor shows, if any: "status" for the free-text
+    # progress sensors, "value" for the enum-like ones (charge state, lock, seat level).
+    # For an entry whose language is English it is shown in English (status_text.py); the
+    # restored value goes through the same door, so yesterday's Italian state is not shown
+    # either. Everything else is returned untouched.
+    _english_kind: str | None = None
+
+    def _in_entry_language(self, value):
+        if self._english_kind is None or not wants_english(
+                getattr(self.coordinator, "language", None)):
+            return value
+        if self._english_kind == "status":
+            return to_english(value)
+        return value_to_english(value)
 
 
 class Omoda9FieldSensor(_Omoda9RestoreSensor):
     """serratura (0=Bloccata/1=Sbloccata), livello sedile (Livello N) o valore grezzo."""
+
+    _english_kind = "value"
 
     def __init__(self, coord, spec: dict) -> None:
         super().__init__(coord, f"Omoda9 {spec['name']}", spec["key"])
@@ -695,6 +714,12 @@ class Omoda9RealtimeSensor(_Omoda9RestoreSensor):
     se non parsabile → emerge l'ultimo valore noto del RestoreSensor); `numeric=False`
     tiene il valore grezzo (codici di stato ricarica da decodificare)."""
 
+    @property
+    def _english_kind(self) -> str | None:
+        # only the enum-like realtime sensors (charge state...) carry Italian words
+        return "value" if self._spec.vmap is not None else None
+
+
     def __init__(self, coord, spec: _RtSpec) -> None:
         super().__init__(coord, f"Omoda9 {spec.name}", f"rt_{spec.suffix}")
         self._spec = spec
@@ -746,6 +771,7 @@ class Omoda9RealtimeSensor(_Omoda9RestoreSensor):
 
 
 class Omoda9SessionStatus(_Omoda9RestoreSensor):
+    _english_kind = "status"
     _attr_icon = "mdi:key-chain"
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 
@@ -758,6 +784,8 @@ class Omoda9SessionStatus(_Omoda9RestoreSensor):
 
 class Omoda9TextSensor(_Omoda9RestoreSensor):
     """Sensore testuale diagnostico (esito ultimo comando/sveglia/sonda)."""
+
+    _english_kind = "status"
 
     _attr_entity_category = EntityCategory.DIAGNOSTIC
 

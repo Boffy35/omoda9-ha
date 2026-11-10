@@ -16,6 +16,33 @@ dell'integrazione: aggiorna da **HACS → Omoda 9 / Jaecoo → Aggiorna**.
 
 ## [Non rilasciato]
 
+### 🇬🇧 English
+
+- **Status messages are in English again for English-language accounts.** The command
+  result, wake result, location probe result and session status sensors, and the charge,
+  lock and scheduled-charging states, were showing Italian text ("Sonda: ancora niente
+  posizione…", "Disattivata") to people who chose English at sign-in. The `omoda_jaecoo`
+  line had these in English; the merge brought the Italian back. They now follow the
+  language chosen at sign-in, using that line's wording where it existed. Accounts set to
+  Italian, and accounts created before the language choice existed, see no change. A
+  message that is not in the list yet still appears, in Italian, rather than disappearing.
+  For English accounts these sensor states change from Italian to English: an automation
+  that compares one of them to an Italian word ("In ricarica") needs the English one
+  ("Charging").
+
+### 🇮🇹 Italiano
+
+- **I messaggi di stato tornano in inglese per gli account in inglese.** I sensori esito
+  comando, esito sveglia, esito sonda posizione e stato sessione, e gli stati di ricarica,
+  serratura e ricarica programmata, mostravano testo italiano a chi aveva scelto l'inglese
+  all'accesso. La linea `omoda_jaecoo` li aveva in inglese; la fusione ha riportato
+  l'italiano. Ora seguono la lingua scelta all'accesso, con le parole di quella linea dove
+  c'erano. Gli account in italiano, e quelli creati prima che esistesse la scelta della
+  lingua, non vedono alcuna differenza. Un messaggio non ancora in elenco compare comunque,
+  in italiano, invece di sparire. Per gli account in inglese questi stati passano
+  dall'italiano all'inglese: un'automazione che li confronta con una parola italiana
+  («In ricarica») deve usare quella inglese («Charging»).
+
 ## v1.14.0 — 2026-08-24
 
 ### 🇬🇧 English
