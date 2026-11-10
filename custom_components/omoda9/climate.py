@@ -143,7 +143,8 @@ class Omoda9Climate(Omoda9Entity, ClimateEntity, RestoreEntity):
             await self.coordinator.async_send_command(key, self._params())
             inviato = True
         except Exception as err:  # noqa: BLE001
-            raise HomeAssistantError(f"Comando clima non riuscito: {err}") from err
+            raise HomeAssistantError(self.coordinator.in_entry_language(
+                f"Comando clima non riuscito: {err}")) from err
         finally:
             if not inviato:
                 self._opt_on = None

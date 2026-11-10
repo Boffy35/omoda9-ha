@@ -36,6 +36,12 @@ EXACT: dict[str, str] = {
     "L'auto non si è accesa in tempo — riprova, o si aggiornerà al prossimo viaggio":
         "The car did not wake in time — try again, or it will update on the next drive",
     "inviato": "sent",
+    # coordinator: the car's own confirmation of a command
+    "Comando in esecuzione sull'auto… ⏳": "Command running on the car… ⏳",
+    "Comando eseguito e confermato dall'auto ✅": "Command carried out and confirmed by the car ✅",
+    # coordinator: command queue
+    "L'auto è ancora impegnata coi comandi precedenti — riprova tra qualche istante.":
+        "The car is still busy with earlier commands — try again in a moment.",
     "richiesta inviata": "request sent",
     "invio non riuscito": "sending failed",
     # core/wake.py
@@ -90,6 +96,15 @@ EXACT: dict[str, str] = {
 # Matched against the whole text; `\1`, `\2` carry the values across unchanged.
 PATTERNS: list[tuple[re.Pattern, str]] = [(re.compile(rx, re.S), en) for rx, en in (
     (r"^fallback Localizza fallito: (.*)$", r"Locate fallback failed: \1"),
+    (r"^Conferma ricevuta dall'auto \(codice esito (.*)\)$",
+     r"Confirmation received from the car (result code \1)"),
+    (r"^Comando ricevuto dall'auto — unica segnalazione: (.*)\. Da sola non indica un guasto\.$",
+     r"Command received by the car — its only note: \1. On its own this is not a fault."),
+    (r"^Eseguito solo in parte ⚠️ — l'auto segnala un problema su: (.*)$",
+     r"Only partly carried out ⚠️ — the car reports a problem with: \1"),
+    # errors raised to the user by entity.py / switch.py / climate.py
+    (r"^Comando «(.+?)» non riuscito: (.*)$", r"Command «\1» failed: \2"),
+    (r"^Comando clima non riuscito: (.*)$", r"Climate command failed: \1"),
     (r"^Non riesco ad accendere il clima: (.*)$", r"Failed to turn on climate: \1"),
     (r"^⚠️ Errore sveglia: (.*)$", r"⚠️ Wake-up error: \1"),
     (r"^⏳ Anti rate-limit: aspetta ancora (\S+) prima di risvegliare di nuovo$",

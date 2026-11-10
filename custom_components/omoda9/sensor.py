@@ -802,7 +802,9 @@ class Omoda9TextSensor(_Omoda9RestoreSensor):
         # [H9] gli esiti diagnostici (comando/sveglia/sonda) NON si ripristinano: un
         # esito vecchio dopo un restart sarebbe fuorviante (sembrerebbe l'ultima azione
         # appena eseguita). Solo il valore live; in assenza → unknown.
-        return self._live_value()
+        # This override bypasses the base class, so it must apply the entry's language
+        # itself (status_text.py); without this line these three stayed Italian.
+        return self._in_entry_language(self._live_value())
 
 
 class Omoda9TimestampSensor(_Omoda9RestoreSensor):
