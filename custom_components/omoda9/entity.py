@@ -248,7 +248,8 @@ class Omoda9OptimisticMixin:
             await self.coordinator.async_send_command(key, params)
             inviato = True
         except Exception as err:  # noqa: BLE001 — qualunque fallimento del comando
-            raise HomeAssistantError(f"Comando «{key}» non riuscito: {err}") from err
+            raise HomeAssistantError(self.coordinator.in_entry_language(
+                f"Comando «{key}» non riuscito: {err}")) from err
         finally:
             if not inviato:
                 self._clear_optimistic()

@@ -1133,6 +1133,12 @@ class Omoda9Coordinator(DataUpdateCoordinator):
             return "Comando eseguito e confermato dall'auto ✅"
         return f"Conferma ricevuta dall'auto (codice esito {result or '?'})"[:255]
 
+    def in_entry_language(self, text: str) -> str:
+        """`text` in this entry's language: English for English entries (status_text.py),
+        unchanged otherwise. Used for the error messages raised to the user."""
+        from .status_text import to_english, wants_english
+        return to_english(text) if wants_english(self.language) else text
+
     def _update(self, patch: dict) -> None:
         """Aggiorna self.data e notifica le entità (thread-safe dal thread paho)."""
         self.hass.loop.call_soon_threadsafe(self._apply_update, patch)
@@ -1293,9 +1299,9 @@ class Omoda9Coordinator(DataUpdateCoordinator):
         try:
             await asyncio.wait_for(self._cmd_gate.acquire(), timeout=COMMAND_QUEUE_WAIT)
         except asyncio.TimeoutError as err:
-            raise HomeAssistantError(
+            raise HomeAssistantError(self.in_entry_language(
                 "L'auto è ancora impegnata coi comandi precedenti — riprova tra qualche istante."
-            ) from err
+            )) from err
         t0 = time.monotonic()
         # ⚠️ Il rilascio dello slot NON può stare solo nei rami che si vedono. Prima era
         # scritto in due punti — il ramo `except Exception` qui sotto e il task di rilascio

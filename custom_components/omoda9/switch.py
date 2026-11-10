@@ -510,7 +510,8 @@ class Omoda9ClimaMacroSwitch(Omoda9OptimisticMixin, Omoda9Entity, SwitchEntity, 
             try:
                 await self.coordinator.async_send_command(cmd)
             except Exception as err:  # noqa: BLE001
-                raise HomeAssistantError(f"Comando «{cmd}» non riuscito: {err}") from err
+                raise HomeAssistantError(self.coordinator.in_entry_language(
+                    f"Comando «{cmd}» non riuscito: {err}")) from err
             spedito = True
             # Da qui parte la finestra in cui la telemetria non viene creduta: l'auto continua
             # a pubblicare lo stato di PRIMA finché non esegue (vedi `_spento_dall_auto`).
