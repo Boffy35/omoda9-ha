@@ -5,9 +5,25 @@
         "title": "Chery Connect",
         "description": "Choose how to sign in to your Omoda/Jaecoo account. Use the phone option if your account is registered with a phone number instead of an email.",
         "menu_options": {
+          "add_vehicle": "Add another vehicle from an account already signed in (no code needed)",
           "login_email": "Sign in with email",
           "login_phone": "Sign in with phone number (SMS)",
           "login_password": "Sign in with password (no code)"
+        }
+      },
+      "add_vehicle": {
+        "title": "Choose the account",
+        "description": "Which signed-in account is the vehicle on?",
+        "data": {
+          "account": "Account"
+        }
+      },
+      "add_vehicle_pick": {
+        "title": "Add another vehicle",
+        "description": "These vehicles are on the account but not yet in Home Assistant. They share its sign-in, so no new code is needed. The tag goes into the new vehicle's entity IDs, so the two cars stay apart: tag \"car2\" gives sensor.chery_connect_car2_battery. Your first vehicle's entity IDs do not change.",
+        "data": {
+          "vin": "Vehicle",
+          "entity_tag": "Entity ID tag"
         }
       },
       "login_email": {
@@ -62,9 +78,10 @@
       },
       "select_vehicle": {
         "title": "Select vehicle",
-        "description": "Your account has more than one vehicle. Choose the VIN to add.",
+        "description": "Your account has more than one vehicle. Choose the VIN to add. If this account already has a vehicle in Home Assistant, the tag goes into the new one's entity IDs (for example sensor.chery_connect_car2_battery).",
         "data": {
-          "vin": "Vehicle (VIN)"
+          "vin": "Vehicle (VIN)",
+          "entity_tag": "Entity ID tag"
         }
       },
       "reconfigure": {
@@ -161,7 +178,10 @@
       "reconfigure_no_entry": "Integration not found — reload Home Assistant and try again.",
       "reconfigure_successful": "PIN updated. The integration was reloaded.",
       "reauth_no_entry": "Integration not found — reload Home Assistant and try again.",
-      "reauth_successful": "Re-authentication successful. The integration was reloaded."
+      "reauth_successful": "Re-authentication successful. The integration was reloaded.",
+      "account_reauth_needed": "The saved sign-in for this account is no longer valid. Re-authenticate one of its vehicles first (Settings → Devices & services), then add the next one.{reason}",
+      "vehicle_list_failed": "Could not read the list of vehicles from the account.{reason}",
+      "no_more_vehicles": "Every vehicle on this account is already in Home Assistant."
     }
   },
   "issues": {

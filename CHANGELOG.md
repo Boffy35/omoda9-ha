@@ -16,6 +16,57 @@ dell'integrazione: aggiorna da **HACS → Omoda 9 / Jaecoo → Aggiorna**.
 
 ## [Non rilasciato]
 
+### 🇬🇧 English
+
+- **Two or more cars on one account now work side by side.** Until now each car was set up
+  as if it had the account to itself, and with a second car on the same login three things
+  went wrong: the two cars kept invalidating each other's sign-in (so Home Assistant kept
+  asking for a new code), their live connections kept knocking each other off, and each
+  car counted wrong-PIN attempts separately, although Chery locks the whole account. Now
+  the sign-in, the live connection and the wrong-PIN counter belong to the account and are
+  shared by its cars; everything that belongs to a car (wake-ups, readings, certificates)
+  stays per car. With one car nothing changes.
+- **Adding the second car no longer needs a code.** *Settings → Devices & services →
+  Chery Connect → Add device* now offers **"Add another vehicle from an account already
+  signed in"**: it lists the account's cars that are not in Home Assistant yet and adds the
+  one you pick, using the existing sign-in.
+- **The second car gets readable entity IDs.** You choose a short tag (for example `car2`)
+  and its entities are named `sensor.chery_connect_car2_battery` and so on, instead of
+  Home Assistant's `_2` suffixes. The first car's entity IDs do not change.
+- **Signing in again fixes every car of the account at once.** One code brings all of them
+  back, and their other "re-authenticate" prompts close by themselves.
+- *Not yet tried on a real car.* Written for an account with a Jaecoo 7 and a Jaecoo 8;
+  the earlier version of the same change, on the `omoda_jaecoo` line, ran on those two cars,
+  and the second car's battery, range and charge state came through. Live messages from the car that do not say which car they are
+  for are credited to the car you just sent a command to; this rule has not been checked
+  against real traffic.
+
+### 🇮🇹 Italiano
+
+- **Due o più auto sullo stesso account ora funzionano insieme.** Finora ogni auto veniva
+  configurata come se l'account fosse solo suo, e con una seconda auto sullo stesso accesso
+  succedevano tre cose: le due auto si invalidavano a vicenda l'accesso (e Home Assistant
+  continuava a chiedere un codice nuovo), le loro connessioni in tempo reale si buttavano
+  fuori a vicenda, e ogni auto contava per conto suo i PIN errati, mentre Chery blocca
+  l'intero account. Ora l'accesso, la connessione in tempo reale e il contatore dei PIN
+  errati sono dell'account e le sue auto li condividono; ciò che è dell'auto (sveglie,
+  letture, certificati) resta per auto. Con una sola auto non cambia nulla.
+- **Aggiungere la seconda auto non richiede più un codice.** *Impostazioni → Dispositivi e
+  servizi → Chery Connect → Aggiungi dispositivo* ora propone **«Aggiungi un altro veicolo
+  da un account già collegato»**: elenca le auto dell'account non ancora in Home Assistant e
+  aggiunge quella che scegli, usando l'accesso già attivo.
+- **La seconda auto ha entity ID leggibili.** Scegli una breve etichetta (per esempio
+  `car2`) e le sue entità si chiamano `sensor.chery_connect_car2_battery` e così via, invece
+  dei suffissi `_2` di Home Assistant. Gli entity ID della prima auto non cambiano.
+- **Una nuova autenticazione sistema tutte le auto dell'account.** Un solo codice le
+  riporta tutte, e gli altri avvisi «ri-autentica» si chiudono da soli.
+- *Non ancora provato su un'auto vera.* Scritto per un account con una Jaecoo 7 e una
+  Jaecoo 8; la versione precedente della stessa modifica, sulla linea `omoda_jaecoo`, ha
+  girato su quelle due auto, e batteria, autonomia e stato di ricarica della seconda sono
+  arrivati. I messaggi in tempo reale che non
+  dicono a quale auto si riferiscono vengono attribuiti all'auto a cui hai appena mandato
+  un comando; questa regola non è stata verificata sul traffico reale.
+
 ## v1.14.0 — 2026-08-24
 
 ### 🇬🇧 English

@@ -16,7 +16,7 @@ from homeassistant.helpers.entity import DeviceInfo
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.util import slugify
 
-from .naming import ENGLISH_KEYS, ID_PREFIX
+from .naming import ENGLISH_KEYS, ID_PREFIX, tag_object_id
 from .const import DEFAULT_VEHICLE_NAME, DOMAIN, OPT_MAX_S
 from .coordinator import Omoda9Coordinator
 
@@ -158,7 +158,10 @@ class Omoda9Entity(CoordinatorEntity[Omoda9Coordinator]):
         self._attr_translation_key = derivata
         # entity_id ESPLICITO = continuità col bridge (default = slugify(name)).
         if entity_id_format:
-            self.entity_id = entity_id_format.format(oid)
+            # A second vehicle on the same account carries its tag in the id (naming.py);
+            # without it Home Assistant would append "_2" in registration order.
+            tag = slugify(getattr(coordinator, "entity_tag", "") or "")
+            self.entity_id = entity_id_format.format(tag_object_id(oid, tag))
         # device dinamico: il nome riflette il veicolo reale (Omoda 9, Jaecoo 7…), letto
         # dal coordinator (nickname/modello da queryList, o override manuale). Il device è
         # identificato dal VIN → rinominarlo NON tocca entity_id né storico.

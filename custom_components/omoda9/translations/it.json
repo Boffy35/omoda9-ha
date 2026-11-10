@@ -5,9 +5,25 @@
         "title": "Chery Connect",
         "description": "Scegli come accedere al tuo account Omoda/Jaecoo. Usa l'opzione telefono se il tuo account è registrato con un numero di telefono invece che con un'email.",
         "menu_options": {
+          "add_vehicle": "Aggiungi un altro veicolo da un account già collegato (senza codice)",
           "login_email": "Accedi con email",
           "login_phone": "Accedi con numero di telefono (SMS)",
           "login_password": "Accedi con password (senza codice)"
+        }
+      },
+      "add_vehicle": {
+        "title": "Scegli l'account",
+        "description": "Su quale account collegato si trova il veicolo?",
+        "data": {
+          "account": "Account"
+        }
+      },
+      "add_vehicle_pick": {
+        "title": "Aggiungi un altro veicolo",
+        "description": "Questi veicoli sono sull'account ma non ancora in Home Assistant. Condividono il suo accesso, quindi non serve un nuovo codice. L'etichetta entra negli entity ID del nuovo veicolo, così le due auto restano distinte: l'etichetta \"car2\" dà sensor.chery_connect_car2_battery. Gli entity ID del primo veicolo non cambiano.",
+        "data": {
+          "vin": "Veicolo",
+          "entity_tag": "Etichetta per gli entity ID"
         }
       },
       "login_email": {
@@ -62,9 +78,10 @@
       },
       "select_vehicle": {
         "title": "Seleziona veicolo",
-        "description": "Il tuo account ha più di un veicolo. Scegli il VIN da aggiungere.",
+        "description": "Il tuo account ha più di un veicolo. Scegli il VIN da aggiungere. Se questo account ha già un veicolo in Home Assistant, l'etichetta entra negli entity ID del nuovo (per esempio sensor.chery_connect_car2_battery).",
         "data": {
-          "vin": "Veicolo (VIN)"
+          "vin": "Veicolo (VIN)",
+          "entity_tag": "Etichetta per gli entity ID"
         }
       },
       "reconfigure": {
@@ -161,7 +178,10 @@
       "reconfigure_no_entry": "Integrazione non trovata — ricarica Home Assistant e riprova.",
       "reconfigure_successful": "PIN aggiornato. L'integrazione è stata ricaricata.",
       "reauth_no_entry": "Integrazione non trovata — ricarica Home Assistant e riprova.",
-      "reauth_successful": "Ri-autenticazione riuscita. L'integrazione è stata ricaricata."
+      "reauth_successful": "Ri-autenticazione riuscita. L'integrazione è stata ricaricata.",
+      "account_reauth_needed": "L'accesso salvato per questo account non è più valido. Ri-autentica prima uno dei suoi veicoli (Impostazioni → Dispositivi e servizi), poi aggiungi il successivo.{reason}",
+      "vehicle_list_failed": "Impossibile leggere l'elenco dei veicoli dall'account.{reason}",
+      "no_more_vehicles": "Tutti i veicoli di questo account sono già in Home Assistant."
     }
   },
   "issues": {

@@ -22,6 +22,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.data_entry_flow import AbortFlow
+from homeassistant.util import slugify
 from homeassistant.helpers.selector import (
     SelectOptionDict,
     SelectSelector,
@@ -44,8 +45,9 @@ from .const import (
     PRESET_OMODA_JAECOO_EU, PRESET_CHERY_EU, PRESET_CUSTOM,
     CONF_POLL_NORMAL, CONF_POLL_CHARGING,
     DEFAULT_POLL_NORMAL_MIN, DEFAULT_POLL_CHARGING_MIN,
-    CONF_VEHICLE_NAME,
+    CONF_VEHICLE_NAME, CONF_ENTITY_TAG,
 )
+from .access import account_token_path
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -260,7 +262,7 @@ def _ctx_del_flow(hass: HomeAssistant, data: dict, token_path: str | None = None
     "pending" e viene spostato al suo posto definitivo solo a veicolo scelto."""
     from .core.context import CoreCtx
 
-    return CoreCtx(
+    ctx = CoreCtx(
         vin=data.get(CONF_VIN, ""),
         tuserid=data.get(CONF_TUSERID, ""),
         pin=data.get(CONF_PIN, ""),
@@ -279,6 +281,15 @@ def _ctx_del_flow(hass: HomeAssistant, data: dict, token_path: str | None = None
         # lingua (Accept-Language) scelta al login → e-mail/SMS OTP nella lingua giusta
         language=str(data.get(CONF_LANGUAGE, DEFAULT_LANGUAGE) or DEFAULT_LANGUAGE),
     )
+    # When the flow works on the token file of an account whose vehicles are running (adding
+    # another vehicle), it must refresh under THEIR lock: two unsynchronised refreshes of one
+    # file retire each other's refresh_token (access.py).
+    registry = hass.data.get(f"{DOMAIN}_account_access", {})
+    shared = registry.get(f"{ctx.tuserid}|{ctx.token_path}")
+    if shared is not None:
+        ctx.stato.lock_token = shared.token_lock
+        ctx.stato.lockout = shared.lockout
+    return ctx
 
 
 def _send_otp(hass: HomeAssistant, data: dict) -> tuple[bool, str]:
@@ -336,14 +347,65 @@ def _discover(hass: HomeAssistant, data: dict) -> tuple[bool, str, list[str], st
         return False, "", [], f"errore scoperta veicoli: {type(e).__name__}"
 
 
-def _finalize_token(hass: HomeAssistant, vin: str) -> bool:
-    """Sposta il token 'pending' nella token-path per-VIN definitiva.
+def _discover_on_account(hass: HomeAssistant, data: dict) -> tuple[str, list[dict], str]:
+    """List the vehicles of an account that is ALREADY signed in, using its saved token.
+
+    No OTP and no new login: this is how a second vehicle of the same account is added.
+    Read-only (queryList). Returns `(status, vehicles, detail)` where status is "ok",
+    "reauth" (no usable session: the user has to sign in again first) or "error"."""
+    token_path = account_token_path(hass.config.path, DOMAIN, str(data.get(CONF_TUSERID, "")))
+    if not os.path.isfile(token_path):
+        return "reauth", [], "no saved session for this account"
+    try:
+        import requests
+        from .core import omoda_auth as A
+        from .core import wake
+        ctx = _ctx_del_flow(hass, data, token_path=token_path)
+        _ut, tu = wake._bff_login(ctx)   # refreshes the token by itself if it has expired
+        if not tu:
+            return "reauth", [], "the account's session has expired"
+        access = wake._access_token(ctx)
+        headers = A.headers_post("/tsp/v1/app/vmc/queryList", ctx=ctx, extra={
+            "Authorization": f"Bearer {access}",
+            "Content-Type": "application/json; charset=UTF-8",
+            "Accept": "application/json, text/plain, */*"})
+        r = requests.post(ctx.bff + "/tsp/v1/app/vmc/queryList",
+                          data=json.dumps({}), headers=headers, timeout=25)
+        lst = r.json().get("data")
+        vehicles = [v for v in lst if isinstance(v, dict) and v.get("vin")] \
+            if isinstance(lst, list) else []
+        return "ok", vehicles, ("ok" if vehicles else "no vehicle found")
+    except Exception as e:  # noqa: BLE001
+        return "error", [], f"vehicle discovery error: {type(e).__name__}"
+
+
+def _vehicle_label(item: dict) -> str:
+    """How a vehicle is listed when choosing one: its name if it has one, then the VIN."""
+    vin = str(item.get("vin", ""))
+    name = str(item.get("nickname") or item.get("fullName") or "").strip()
+    return f"{name} ({vin})" if name else vin
+
+
+# What a vehicle's entry inherits from another vehicle of the same account: the login and
+# the region, nothing about the car. An allowlist rather than a denylist, so that a per-car
+# key added in the future is never copied to the wrong car by default.
+_ACCOUNT_KEYS = (
+    CONF_TUSERID, CONF_EMAIL, CONF_PIN, CONF_PHONE, CONF_AREA_CODE, CONF_LOGIN_METHOD,
+    CONF_LANGUAGE, CONF_BFF, CONF_TSP_HOST, CONF_CERTS_SRC, CONF_CHANNEL_ID,
+    CONF_CAR_MQTT_HOST, CONF_CAR_MQTT_PORT, CONF_TENANT_CODE, CONF_COUNTRY_ID,
+)
+
+
+def _finalize_token(hass: HomeAssistant, vin: str, tuserid: str = "") -> bool:
+    """Move the 'pending' token to its final place: the ACCOUNT's token file, shared by all
+    its vehicles (access.py). Without a tuserid it falls back to the old per-VIN path.
 
     Ritorna True se il token è in posizione (spostato ora o già presente),
     False se lo spostamento fallisce: in tal caso il flow va fatto fallire,
     perché senza token il coordinator non potrebbe autenticarsi."""
     pend = _pending_token_path(hass)
-    dest = hass.config.path(f"{DOMAIN}_{vin}_token.json")
+    dest = (account_token_path(hass.config.path, DOMAIN, tuserid) if tuserid
+            else hass.config.path(f"{DOMAIN}_{vin}_token.json"))
     try:
         if os.path.isfile(pend):
             os.replace(pend, dest)
@@ -373,6 +435,9 @@ class Omoda9ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._tuserid: str = ""
         self._vins: list[str] = []
         self._reauth_reason: str = ""       # reauth: motivo dell'ultimo tentativo, mostrato nel menu
+        self._entity_tag: str = ""          # tag for the entity_ids of a further vehicle
+        self._source_entry = None           # add_vehicle: the entry whose login is reused
+        self._vehicles: list[dict] = []     # vehicles offered by add_vehicle_pick
 
     @staticmethod
     @callback
@@ -442,10 +507,82 @@ class Omoda9ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         Alcuni account sono registrati col NUMERO e non hanno e-mail: per loro il login e-mail
         fallisce e serve il ramo SMS. Il ramo PASSWORD (username+password, senza codici) è il più
         comodo per chi ha impostato una password sull'account."""
-        return self.async_show_menu(
-            step_id="user",
-            menu_options=["login_email", "login_phone", "login_password"],
-        )
+        options = ["login_email", "login_phone", "login_password"]
+        # A vehicle of an account that is already signed in can be added without a new
+        # login: offered first whenever there is such an account.
+        if self._accounts():
+            options.insert(0, "add_vehicle")
+        return self.async_show_menu(step_id="user", menu_options=options)
+
+    # ───────────────── another vehicle of an account that is already signed in ─────────────────
+    def _accounts(self) -> dict[str, config_entries.ConfigEntry]:
+        """tUserId -> one configured entry of that account (the source of its login data)."""
+        out: dict[str, config_entries.ConfigEntry] = {}
+        for e in self.hass.config_entries.async_entries(DOMAIN):
+            tu = str(e.data.get(CONF_TUSERID) or "")
+            if tu and e.data.get(CONF_VIN):
+                out.setdefault(tu, e)
+        return out
+
+    def _configured_vins(self) -> set[str]:
+        return {str(e.data.get(CONF_VIN, "")).upper()
+                for e in self.hass.config_entries.async_entries(DOMAIN)}
+
+    def _suggested_tag(self, tuserid: str) -> str:
+        """`car2`, `car3`… when the account already has a vehicle here, else empty."""
+        n = sum(1 for e in self.hass.config_entries.async_entries(DOMAIN)
+                if str(e.data.get(CONF_TUSERID) or "") == tuserid)
+        return f"car{n + 1}" if n else ""
+
+    async def async_step_add_vehicle(self, user_input: dict[str, Any] | None = None):
+        """Choose the account (asked only when there is more than one), then its vehicle."""
+        accounts = self._accounts()
+        if not accounts:
+            return await self.async_step_user()
+        if user_input is None and len(accounts) > 1:
+            from .core import mask
+            labels = {tu: (mask.indirizzo_email(e.data.get(CONF_EMAIL, ""))
+                           if e.data.get(CONF_EMAIL) else e.title)
+                      for tu, e in accounts.items()}
+            return self.async_show_form(step_id="add_vehicle", data_schema=vol.Schema(
+                {vol.Required("account"): vol.In(labels)}))
+        tuserid = user_input["account"] if user_input else next(iter(accounts))
+        self._source_entry = accounts[tuserid]
+        return await self.async_step_add_vehicle_pick()
+
+    async def async_step_add_vehicle_pick(self, user_input: dict[str, Any] | None = None):
+        """List the account's vehicles not yet configured; create the chosen one's entry."""
+        src = self._source_entry
+        tuserid = str(src.data.get(CONF_TUSERID, ""))
+        if user_input is not None:
+            vin = user_input[CONF_VIN]
+            await self.async_set_unique_id(vin)
+            self._abort_if_unique_id_configured()
+            data = {k: src.data[k] for k in _ACCOUNT_KEYS if k in src.data}
+            data[CONF_VIN] = vin
+            tag = slugify(str(user_input.get(CONF_ENTITY_TAG) or "").strip())
+            if tag:
+                data[CONF_ENTITY_TAG] = tag
+            return self.async_create_entry(title=f"Omoda 9 ({vin})", data=data)
+
+        status, vehicles, detail = await self.hass.async_add_executor_job(
+            _discover_on_account, self.hass, dict(src.data))
+        if status == "reauth":
+            return self.async_abort(reason="account_reauth_needed",
+                                    description_placeholders={"reason": _reason_line(detail)})
+        if status != "ok":
+            return self.async_abort(reason="vehicle_list_failed",
+                                    description_placeholders={"reason": _reason_line(detail)})
+        done = self._configured_vins()
+        self._vehicles = [v for v in vehicles if str(v["vin"]).upper() not in done]
+        if not self._vehicles:
+            return self.async_abort(reason="no_more_vehicles")
+        schema = vol.Schema({
+            vol.Required(CONF_VIN): vol.In(
+                {str(v["vin"]): _vehicle_label(v) for v in self._vehicles}),
+            vol.Optional(CONF_ENTITY_TAG, default=self._suggested_tag(tuserid)): str,
+        })
+        return self.async_show_form(step_id="add_vehicle_pick", data_schema=schema)
 
     async def _submit_login(self, user_input: dict[str, Any], step_id: str, schema):
         """Logica comune ai due login: salva i dati, prova a inviare l'OTP, va allo step OTP."""
@@ -599,9 +736,17 @@ class Omoda9ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def async_step_select_vehicle(self, user_input: dict[str, Any] | None = None):
         if user_input is not None:
+            self._entity_tag = slugify(str(user_input.get(CONF_ENTITY_TAG) or "").strip())
             return await self._create_entry(user_input[CONF_VIN])
-        schema = vol.Schema({vol.Required(CONF_VIN): vol.In(self._vins)})
-        return self.async_show_form(step_id="select_vehicle", data_schema=schema)
+        # Vehicles already configured are not offered again; when the account already has a
+        # vehicle here, ask for the tag that keeps the new one's entity_ids apart.
+        done = self._configured_vins()
+        vins = [v for v in self._vins if v.upper() not in done] or self._vins
+        fields: dict = {vol.Required(CONF_VIN): vol.In(vins)}
+        tag = self._suggested_tag(self._tuserid)
+        if tag:
+            fields[vol.Optional(CONF_ENTITY_TAG, default=tag)] = str
+        return self.async_show_form(step_id="select_vehicle", data_schema=vol.Schema(fields))
 
     async def _create_entry(self, vin: str):
         # Unicità VIN il prima possibile: appena conosciamo il VIN, prima di creare
@@ -617,7 +762,13 @@ class Omoda9ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             raise
         self._data[CONF_VIN] = vin
         self._data[CONF_TUSERID] = self._tuserid
-        ok = await self.hass.async_add_executor_job(_finalize_token, self.hass, vin)
+        # A further vehicle of an account that already has one here gets an entity_id tag:
+        # the one typed in select_vehicle, else the suggestion (single-vehicle discovery path).
+        tag = self._entity_tag or self._suggested_tag(self._tuserid)
+        if tag:
+            self._data[CONF_ENTITY_TAG] = tag
+        ok = await self.hass.async_add_executor_job(
+            _finalize_token, self.hass, vin, self._tuserid)
         if not ok:
             await self.hass.async_add_executor_job(_cleanup_pending, self.hass)
             return self.async_abort(reason="token_move_failed")
@@ -790,6 +941,31 @@ class Omoda9ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 phone, entry.data.get(CONF_AREA_CODE, DEFAULT_AREA_CODE))
         return mask.indirizzo_email(entry.data.get(CONF_EMAIL, ""))
 
+    def _reload_account_siblings(self, entry) -> None:
+        """After a successful sign-in, bring back the OTHER vehicles of the same account.
+
+        They share the token file this sign-in just rewrote (access.py), so one login serves
+        all of them: each is reloaded, and any re-authentication prompt of theirs - now
+        pointless - is closed instead of asking the user for a second code."""
+        tuserid = str(entry.data.get(CONF_TUSERID) or "")
+        if not tuserid:
+            return
+        siblings = {e.entry_id for e in self.hass.config_entries.async_entries(DOMAIN)
+                    if e.entry_id != entry.entry_id
+                    and str(e.data.get(CONF_TUSERID) or "") == tuserid}
+        if not siblings:
+            return
+        for flow in self.hass.config_entries.flow.async_progress_by_handler(DOMAIN):
+            ctx = flow.get("context") or {}
+            if (flow["flow_id"] != self.flow_id and ctx.get("source") == "reauth"
+                    and ctx.get("entry_id") in siblings):
+                try:
+                    self.hass.config_entries.flow.async_abort(flow["flow_id"])
+                except Exception:  # noqa: BLE001 - closing a prompt is cosmetic
+                    pass
+        for entry_id in siblings:
+            self.hass.config_entries.async_schedule_reload(entry_id)
+
     async def async_step_reauth_confirm(self, user_input: dict[str, Any] | None = None):
         """Menu della riautenticazione: due strade esplicite, nessun effetto collaterale.
 
@@ -837,6 +1013,7 @@ class Omoda9ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ok, detail = await self.hass.async_add_executor_job(
                     coordinator._login_with_password, password)
                 if ok:
+                    self._reload_account_siblings(entry)
                     return self.async_update_reload_and_abort(entry, data=entry.data)
                 self._reauth_reason = _reason_line(detail)
                 errors["base"] = "password_invalid"
@@ -894,6 +1071,7 @@ class Omoda9ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 ok, detail = await self.hass.async_add_executor_job(
                     coordinator._confirm_otp, code)
                 if ok:
+                    self._reload_account_siblings(entry)
                     return self.async_update_reload_and_abort(entry, data=entry.data)
                 # Codice sbagliato o scaduto → torna al menu, dove «Inviami un codice
                 # nuovo» è a portata di tap. Restare su questa form significherebbe

@@ -25,7 +25,7 @@ def flusso_ok(monkeypatch):
     monkeypatch.setattr(cf, "_mint_token", lambda hass, data, code: (True, "token ok"))
     monkeypatch.setattr(cf, "_discover",
                         lambda hass, data: (True, FX.TUSERID, [FX.VIN], "ok"))
-    monkeypatch.setattr(cf, "_finalize_token", lambda hass, vin: True)
+    monkeypatch.setattr(cf, "_finalize_token", lambda hass, vin, tuserid="": True)
     monkeypatch.setattr(cf, "_cleanup_pending", lambda hass: None)
     return cf
 
@@ -172,7 +172,7 @@ async def test_stesso_veicolo_non_si_configura_due_volte(hass, flusso_ok, config
 async def test_token_non_spostabile_fa_fallire_il_flow(hass, flusso_ok, monkeypatch):
     """Senza token in posizione il coordinator non potrebbe autenticarsi: meglio un
     abort esplicito che un'integrazione creata e subito rotta."""
-    monkeypatch.setattr(flusso_ok, "_finalize_token", lambda hass, vin: False)
+    monkeypatch.setattr(flusso_ok, "_finalize_token", lambda hass, vin, tuserid="": False)
 
     result = await _init_e_email(hass)
     result = await hass.config_entries.flow.async_configure(result["flow_id"], DATI_UTENTE)

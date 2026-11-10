@@ -196,6 +196,12 @@ def adotta(hass, entry, *, dry_run: bool = False) -> dict:
 
     nostre = {e.unique_id: e for e in er.async_entries_for_config_entry(reg, entry.entry_id)}
     vin = entry.data.get("vin") or ""
+    from homeassistant.util import slugify
+
+    from .const import CONF_ENTITY_TAG
+    from .naming import tag_entity_id
+
+    tag = slugify(str(entry.data.get(CONF_ENTITY_TAG) or ""))
 
     for voce in list(reg.entities.values()):
         if voce.platform != LEGACY_DOMAIN:
@@ -249,6 +255,9 @@ def adotta(hass, entry, *, dry_run: bool = False) -> dict:
         # Secondo passo: l'entity_id. `async_update_entity_platform` non lo tocca, quindi
         # senza questo l'entita' sarebbe nostra ma continuerebbe a chiamarsi come di la'.
         atteso = CANON_ENTITY_ID.get((piattaforma, nostro_suffisso))
+        if atteso is not None and tag:
+            # a second vehicle on the account: its canonical id carries its tag (naming.py)
+            atteso = tag_entity_id(atteso, tag)
         if atteso is None:
             # Nessun nome canonico per quel suffisso: si tiene l'entity_id che aveva. E' gia'
             # inglese su quella linea, quindi e' un risultato accettabile e non una perdita.

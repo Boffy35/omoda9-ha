@@ -30,9 +30,17 @@ from homeassistant.helpers.event import async_call_later, async_track_time_inter
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
+from .access import (
+    acquire_access,
+    account_token_path,
+    forget_mqtt_session,
+    mqtt_session,
+    release_access,
+)
+
 from .const import (
     DOMAIN, CAR_SEED, DEFAULT_AWAKE_WINDOW, DEFAULT_SESSION_EVERY, CERT_FILES,
-    CONF_VIN, CONF_TUSERID, CONF_PIN, CONF_EMAIL, CONF_CERTS_SRC,
+    CONF_ENTITY_TAG, CONF_VIN, CONF_TUSERID, CONF_PIN, CONF_EMAIL, CONF_CERTS_SRC,
     CONF_PHONE, CONF_AREA_CODE, DEFAULT_AREA_CODE,
     CONF_LANGUAGE, LANGUAGE_FALLBACK,
     CONF_BFF, CONF_TSP_HOST, CONF_CAR_MQTT_HOST, CONF_CAR_MQTT_PORT, CONF_CHANNEL_ID,
@@ -295,8 +303,10 @@ class Omoda9Coordinator(DataUpdateCoordinator):
         self.car_host = cfg[CONF_CAR_MQTT_HOST]
         self.car_port = int(cfg[CONF_CAR_MQTT_PORT])
         self.awake_window = DEFAULT_AWAKE_WINDOW
-        # per-entry storage (token + certs) nella config dir di HA
-        self.token_path = hass.config.path(f"{DOMAIN}_{self.vin}_token.json")
+        # Storage in the HA config dir. The token belongs to the ACCOUNT and is shared by all
+        # its vehicles (see access.py: two per-VIN copies would retire each other's
+        # refresh_token); the certificates stay per vehicle.
+        self.token_path = account_token_path(hass.config.path, DOMAIN, str(self.tuserid))
         self.certs_dir = hass.config.path(f"{DOMAIN}_{self.vin}_certs")
         self.certs_src = cfg.get(CONF_CERTS_SRC) or ""
         self.tsp_host = cfg[CONF_TSP_HOST]
@@ -330,7 +340,17 @@ class Omoda9Coordinator(DataUpdateCoordinator):
         #   * con due veicoli configurati il secondo entry non sovrascrive più la
         #     configurazione del primo (era ambiente di PROCESSO, condiviso da entrambi).
 
-        self._car = None  # paho mqtt.Client (importato in _connect_car, executor)
+        # The account's shared MQTT session (access.AccountMqtt), joined in _connect_car.
+        self._mqtt = None
+        # Account-level state shared with the other vehicles of this login (token lock, PIN
+        # lockout). Taken in _build_ctx, released in async_stop.
+        self._access = None
+        # When this vehicle was last sent a command: lets the shared MQTT session credit a
+        # push without a VIN to the vehicle that was just commanded (access.route).
+        self.last_command_ts = 0.0
+        # Tag inserted into this vehicle's entity_ids when it is not the first vehicle of the
+        # account (entity.py). Empty for the first or only vehicle: its ids do not change.
+        self.entity_tag = str(cfg.get(CONF_ENTITY_TAG) or "").strip()
         # P2-4: registro UNICO dei timer (keep-alive, poll, follow-up HV, sonda iniziale,
         # battito marcia). Prima erano cinque attributi `_*_unsub` cancellati in tre punti
         # e ri-armati in altri due → poll orfani che contattavano il cloud a integrazione
@@ -752,6 +772,23 @@ class Omoda9Coordinator(DataUpdateCoordinator):
             _LOGGER.debug("[poll] lettura realtime fallita: %s", err)
 
     def _connect_car(self) -> None:
+        """Join the account's MQTT session, opening it if this is its first vehicle.
+
+        One session per account, not per vehicle: the broker identifies the client by the
+        account (`app_<channel>_<tUserId>`) and allows one connection per client id, so a
+        second vehicle opening its own would knock the first one off, and back, forever."""
+        session = mqtt_session(self._registry("mqtt"), self.car_host, self.car_port, self.channel_id, str(self.tuserid))
+        self._mqtt = session
+        session.attach(self, self._make_mqtt_client)
+
+    def _registry(self, kind: str) -> dict:
+        """Per-Home-Assistant registry of account-level objects (access.py), kept in
+        `hass.data` so that two HA instances in one process never share them."""
+        return self.hass.data.setdefault(f"{DOMAIN}_account_{kind}", {})
+
+    def _make_mqtt_client(self, on_connect_cb, on_disconnect_cb, on_message_cb):
+        """Build and start the account's paho client (executor). Called once per account,
+        by whichever vehicle attaches first; its certificates open the session."""
         # import qui (executor): a livello modulo causa un blocking-call warning nel loop.
         import paho.mqtt.client as mqtt
 
@@ -772,28 +809,28 @@ class Omoda9Coordinator(DataUpdateCoordinator):
 
         def on_connect(cl, u, flags, rc, props=None):
             ok = (rc == 0) or (getattr(rc, "value", 1) == 0)
-            self._update({"car_connected": ok})
             _LOGGER.info("[auto] MQTT on_connect rc=%s → %s (sub %s)",
                          rc, "connesso" if ok else "RIFIUTATO", topic if ok else "-")
             if ok:
                 cl.subscribe(topic, qos=1)
-            if self._diag is not None:
-                self._mqtt_up_ts = time.time()
-                self._diag.record("mqtt_conn", event="connect", rc=str(rc), ok=ok)
+            on_connect_cb(ok, str(rc))
 
         def on_disconnect(cl, u, *a):
-            self._update({"car_connected": False})
             _LOGGER.info("[auto] MQTT disconnesso")
-            if self._diag is not None:
-                # uptime della sessione appena caduta: sessioni cortissime = flapping.
-                up = round(time.time() - self._mqtt_up_ts, 1) if self._mqtt_up_ts else None
-                self._mqtt_up_ts = 0.0
-                rc = str(a[1]) if len(a) > 1 else (str(a[0]) if a else "?")
-                self._diag.record("mqtt_conn", event="disconnect", rc=rc, uptime_s=up)
+            rc = str(a[1]) if len(a) > 1 else (str(a[0]) if a else "?")
+            on_disconnect_cb(rc)
+
+        def on_message(cl, u, msg):
+            try:
+                obj = json.loads(msg.payload.decode("utf-8"))
+            except Exception as err:  # noqa: BLE001
+                _LOGGER.debug("[auto] payload MQTT non decodificabile: %s", err)
+                return
+            on_message_cb(obj)
 
         c.on_connect = on_connect
         c.on_disconnect = on_disconnect
-        c.on_message = self._on_car_message
+        c.on_message = on_message
         # [H4] backoff di riconnessione (evita lo storming a 1s di default su rete giù)
         c.reconnect_delay_set(min_delay=1, max_delay=120)
         # [H4] il connect iniziale può fallire (DNS/cert/rete) → ConfigEntryNotReady,
@@ -805,7 +842,21 @@ class Omoda9Coordinator(DataUpdateCoordinator):
                 f"connessione MQTT auto fallita ({self.car_host}:{self.car_port}): {err}"
             ) from err
         c.loop_start()
-        self._car = c
+        return c
+
+    def on_mqtt_connection(self, connected: bool, rc: str) -> None:
+        """The shared MQTT session went up or down (paho thread)."""
+        self._update({"car_connected": connected})
+        if self._diag is None:
+            return
+        if connected:
+            self._mqtt_up_ts = time.time()
+            self._diag.record("mqtt_conn", event="connect", rc=rc, ok=True)
+        else:
+            # uptime della sessione appena caduta: sessioni cortissime = flapping.
+            up = round(time.time() - self._mqtt_up_ts, 1) if self._mqtt_up_ts else None
+            self._mqtt_up_ts = 0.0
+            self._diag.record("mqtt_conn", event="disconnect", rc=rc, uptime_s=up)
 
     def async_stop(self) -> None:
         """[MED] Spegnimento MQTT. Bloccante (loop_stop fa join del thread paho) →
@@ -823,20 +874,49 @@ class Omoda9Coordinator(DataUpdateCoordinator):
         # NB: `disarm=False` — l'unload non consuma la finestra del monitor, che riprende
         # al reload con la scadenza originale (calcolata sull'mtime della bandierina).
         self._diag_shutdown()
-        if self._car is not None:
+        if self._mqtt is not None:
+            # Leave the shared session; the client is stopped only by the account's LAST
+            # vehicle, so unloading one car does not cut the other one off.
             try:
-                self._car.disconnect()
-                self._car.loop_stop()
+                client = self._mqtt.detach(self)
+                if client is not None:
+                    client.disconnect()
+                    client.loop_stop()
+                forget_mqtt_session(self._registry("mqtt"), self._mqtt)
             except Exception as err:  # noqa: BLE001 — lo stop non deve far fallire l'unload
                 _LOGGER.debug("[auto] errore in async_stop: %s", err)
-            self._car = None
+            self._mqtt = None
+        if self._access is not None:
+            release_access(self._registry("access"), self._access, self.vin)
+            self._access = None
+
+    def on_push(self, obj, attributed: bool) -> None:
+        """A decoded push the account's MQTT session routed to this vehicle (paho thread).
+
+        `attributed=False`: the push named no VIN and several vehicles share the account, so
+        it cannot be taken as THIS vehicle's state. Nothing is applied; the push only asks
+        for a read-only REST refresh, which is per VIN. The probe's own cooldown turns a
+        burst of such pushes into a single read."""
+        if not attributed:
+            if not self._timers.closing:
+                self.hass.loop.call_soon_threadsafe(
+                    lambda: self.hass.async_create_task(self.async_probe()))
+            return
+        self._on_car_payload(obj)
 
     def _on_car_message(self, c, u, msg) -> None:
-        """Parsing identico a ha_bridge.car_on_message (thread paho → push verso HA)."""
+        """Decode a raw paho message and handle it as this vehicle's own (kept for callers
+        that feed messages directly, such as the tests)."""
         try:
             obj = json.loads(msg.payload.decode("utf-8"))
         except Exception as err:  # noqa: BLE001
             _LOGGER.debug("[auto] payload MQTT non decodificabile: %s", err)
+            return
+        self._on_car_payload(obj)
+
+    def _on_car_payload(self, obj) -> None:
+        """Parsing identico a ha_bridge.car_on_message (thread paho → push verso HA)."""
+        if not isinstance(obj, dict):
             return
         content = obj.get("content", obj)
         data = content.get("data", {}) if isinstance(content, dict) else {}
@@ -1081,7 +1161,7 @@ class Omoda9Coordinator(DataUpdateCoordinator):
         """
         from .core.context import CoreCtx
 
-        return CoreCtx(
+        ctx = CoreCtx(
             vin=self.vin,
             tuserid=self.tuserid,
             pin=self.pin,
@@ -1104,6 +1184,16 @@ class Omoda9Coordinator(DataUpdateCoordinator):
             # dal package padre, quindi non può conoscere le chiavi `DATA_*` di const.py.
             caps=self._caps_correnti(),
         )
+        # Account-level state (access.py): the token refresh lock and the PIN lockout are
+        # the ACCOUNT's, so every vehicle of this login uses the same two objects. Sharing
+        # the lockout also serialises taskId mints across the account, which matters because
+        # minting sets the account's single "active vehicle" (setVecDefault).
+        if self._access is None:
+            self._access = acquire_access(self._registry("access"), str(self.tuserid),
+                                          self.token_path, self.vin)
+        ctx.stato.lock_token = self._access.token_lock
+        ctx.stato.lockout = self._access.lockout
+        return ctx
 
     @property
     def ctx(self):
@@ -1255,6 +1345,7 @@ class Omoda9Coordinator(DataUpdateCoordinator):
         return res
 
     def _send_command(self, key: str, params: dict | None = None) -> str:
+        self.last_command_ts = time.time()
         from .core import commands as CMD
         msgs: list[str] = []
         note: list[str] = []
@@ -1384,6 +1475,8 @@ class Omoda9Coordinator(DataUpdateCoordinator):
 
     def _wake(self) -> None:
         from .core import wake as WAKE
+
+        self.last_command_ts = time.time()
 
         def emit(m):
             _LOGGER.info("[wake] %s", m)

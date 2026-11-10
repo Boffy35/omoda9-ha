@@ -14,6 +14,7 @@ import logging
 import os
 
 from homeassistant.config_entries import ConfigEntry, ConfigEntryState
+from homeassistant.util import slugify
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady, HomeAssistantError
 
@@ -158,8 +159,11 @@ async def _async_migrate_entity_ids(hass: HomeAssistant, entry: ConfigEntry) -> 
     """
     from homeassistant.helpers import entity_registry as er
 
-    from .naming import ENGLISH_KEYS, ID_PREFIX
+    from .const import CONF_ENTITY_TAG
+    from .naming import ENGLISH_KEYS, ID_PREFIX, tag_entity_id
 
+    # A second vehicle on the account keeps its tag through the rename (naming.py).
+    tag = slugify(str(entry.data.get(CONF_ENTITY_TAG) or ""))
     reg = er.async_get(hass)
     esistenti = {e.entity_id for e in reg.entities.values()}
     fatti = 0
@@ -170,7 +174,7 @@ async def _async_migrate_entity_ids(hass: HomeAssistant, entry: ConfigEntry) -> 
         inglese = ENGLISH_KEYS.get(object_id[len(DOMAIN) + 1:])
         if inglese is None:
             continue
-        nuovo = f"{piattaforma}.{ID_PREFIX}_{inglese}"
+        nuovo = tag_entity_id(f"{piattaforma}.{ID_PREFIX}_{inglese}", tag)
         if nuovo == voce.entity_id:
             continue
         if nuovo in esistenti:
@@ -215,6 +219,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     # PRIMA di costruire qualunque entita': il rename tocca il registro, e il registro va
     # sistemato mentre nessuna entita' e' ancora montata.
     await _async_migrate_entity_ids(hass, entry)
+
+    # The session token belongs to the account, shared by all its vehicles (access.py).
+    # First start after that change: seed the account file from this vehicle's old one.
+    from .access import migrate_token
+    from .const import CONF_TUSERID, CONF_VIN
+
+    await hass.async_add_executor_job(
+        migrate_token, hass.config.path, DOMAIN,
+        str(entry.data.get(CONF_TUSERID, "")), str(entry.data.get(CONF_VIN, "")))
 
     coordinator = Omoda9Coordinator(hass, entry)
 

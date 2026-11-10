@@ -69,8 +69,11 @@ def test_due_coordinator_due_contesti(hass, cloud, monkeypatch):
     assert primo.ctx is not secondo.ctx
     assert primo.ctx.vin != secondo.ctx.vin
     assert primo.ctx.pin != secondo.ctx.pin
-    assert primo.ctx.token_path != secondo.ctx.token_path
     assert primo.ctx.taskid_file != secondo.ctx.taskid_file
+    # Both vehicles are on the SAME account (same tUserId), so they share its session token:
+    # one file, not two copies that would retire each other's refresh_token. Per-account
+    # separation, and what else the account shares, is covered in test_multi_car.py.
+    assert primo.ctx.token_path == secondo.ctx.token_path
 
 
 # ───────────────────────── niente segreti nell'ambiente ─────────────────────────

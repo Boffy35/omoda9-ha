@@ -21,6 +21,25 @@ from __future__ import annotations
 # in an entity id is this.
 ID_PREFIX = "chery_connect"
 
+
+def tag_object_id(object_id: str, tag: str) -> str:
+    """Put a vehicle's tag into an object_id: `chery_connect_battery` with tag `nanna`
+    becomes `chery_connect_nanna_battery`. An object_id without the prefix gets the tag at
+    the end. An empty tag returns the object_id unchanged - the first or only vehicle of an
+    account never sees its entity_ids move."""
+    if not tag:
+        return object_id
+    prefix = f"{ID_PREFIX}_"
+    if object_id.startswith(prefix):
+        return f"{prefix}{tag}_{object_id[len(prefix):]}"
+    return f"{object_id}_{tag}"
+
+
+def tag_entity_id(entity_id: str, tag: str) -> str:
+    """`tag_object_id` for a full entity_id (`sensor.chery_connect_battery`)."""
+    platform, _, object_id = entity_id.partition(".")
+    return f"{platform}.{tag_object_id(object_id, tag)}"
+
 # old translation key (Italian, derived from the entity name) -> new key (English).
 # The `entity_id` follows: f"{ID_PREFIX}_{new key}".
 ENGLISH_KEYS: dict[str, str] = {

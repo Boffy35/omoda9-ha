@@ -52,6 +52,10 @@ CONF_EMAIL = "email"
 CONF_PIN = "pin"
 CONF_VIN = "vin"
 CONF_TUSERID = "tuserid"
+# Short tag in the entity_ids of a vehicle that is NOT the first one of its account, so two
+# cars on one login get readable ids (chery_connect_<tag>_battery) instead of HA's "_2"
+# suffixes. Absent for the first or only vehicle, whose ids therefore never change.
+CONF_ENTITY_TAG = "entity_tag"
 # Login via SMS (telefono): alternativa all'email. Alcuni account sono registrati col
 # numero e NON hanno email → per loro il login email fallisce. Se `phone` è valorizzato
 # nell'entry, il login usa il ramo SMS (invio codice via sendSmsCode + grant_type=mobile).
