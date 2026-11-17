@@ -365,7 +365,11 @@ def to_english(text):
         return whole
     if _SEP not in text:
         return _piece(text)
-    # the bilingual "skipped" tail spans two pieces: settle it before splitting
+    # Pieces that contain the separator themselves (the bilingual code meanings of
+    # core/codes.py, the "skipped" tail) are settled on the whole line before splitting.
+    for it, en in _FRAGMENTS_ORDERED:
+        if _SEP in it and it in text:
+            text = text.replace(it, en)
     for rx, en in FRAGMENT_PATTERNS:
         text = rx.sub(en, text)
     return _SEP.join(_piece(p) for p in text.split(_SEP))
