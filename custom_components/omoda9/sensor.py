@@ -509,7 +509,9 @@ class _Omoda9RestoreSensor(Omoda9Entity, RestoreSensor):
                 getattr(self.coordinator, "language", None)):
             return value
         if self._english_kind == "status":
-            return to_english(value)
+            # English can run longer than the Italian it replaces: keep within HA's 255.
+            english = to_english(value)
+            return english[:255] if isinstance(english, str) else english
         return value_to_english(value)
 
 

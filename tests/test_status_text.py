@@ -136,3 +136,53 @@ def test_the_status_sensors_themselves_show_english(hass):
 
 def test_an_italian_entry_is_left_alone(hass):
     assert _text_sensor(hass, "it-IT").native_value == "Comando eseguito e confermato dall'auto ✅"
+
+
+# ─────────────────────── results with the warnings joined to them ───────────────────────
+_ROUTED_OFF = ("questa funzione non è autorizzata sulla sua via abituale su questo veicolo: "
+               "inviata tramite il clima, che quindi si spegne insieme a lei")
+
+
+def test_a_result_with_a_joined_warning_reads_in_english():
+    """Seen on a Jaecoo 7 on 2026-11-17: the confirmation and the routing note, joined with
+    « · », both stayed Italian because the whole line matched nothing."""
+    name = "Sedile guida riscaldato OFF"
+    line = f"Comando eseguito e confermato dall'auto ✅ · {name}: {_ROUTED_OFF}"
+    assert to_english(line) == (
+        "Command carried out and confirmed by the car ✅ · Driver seat heating off: this "
+        "function is not allowed by its usual route on this car: sent through the climate "
+        "control, which turns off with it")
+
+
+@pytest.mark.parametrize("acceso", [True, False])
+def test_every_permission_note_has_english(acceso):
+    """Ratchet: the notes core/permessi.py shows before sending, built by the code itself."""
+    from custom_components.omoda9.core import permessi
+
+    notes = [permessi.MSG_RICOMPOSTA, permessi.MSG_CATEGORIA_NEGATA, permessi.MSG_BASE_NEGATA]
+    for (endpoint, campo) in permessi.RIPIEGO:
+        _, _, nota = permessi.instrada(endpoint, {campo: "1" if acceso else "0"},
+                                       _all_allowed_but(permessi, endpoint, campo))
+        assert nota, f"no routing note for {endpoint}/{campo}: the test lost its premise"
+        notes.append(nota)
+    for note in notes:
+        assert to_english(note) != note, f"no English for permission note {note!r}"
+
+
+def _all_allowed_but(permessi, endpoint, campo):
+    """A permission list where the field's usual route is closed and the climate one open."""
+    dedicata, _ = permessi.RIPIEGO[(endpoint, campo)]
+    return {dedicata: 0}
+
+
+def test_skipped_parts_and_the_log_tail():
+    assert to_english("Clima acceso: non autorizzate su questa auto, salto sedile guida, "
+                      "aria sedile post. DX") == \
+        "Climate on: not allowed on this car, skipping driver seat, rear right seat ventilation"
+    assert to_english("Clima acceso: HTTP 200 A00079 — comando accettato ✅ · (+2 nel registro)") \
+        == "Climate on: HTTP 200 A00079 — command accepted ✅ · (+2 more in the log)"
+
+
+def test_the_bilingual_wake_message_keeps_only_english():
+    assert to_english("Sveglio l'auto: il comando parte fra ~25 s · Waking the car: command "
+                      "goes out in ~25 s") == "Waking the car: command goes out in ~25 s"
