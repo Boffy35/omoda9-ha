@@ -268,18 +268,107 @@ def _fragments(text: str) -> str:
     return text
 
 
-def to_english(text):
-    """The English for a status sentence, or the sentence unchanged if it is not listed."""
-    if not isinstance(text, str) or not text:
-        return text
+# ───────────────────────── notes joined to a command result ─────────────────────────
+# A command result can carry the warnings raised before sending, joined with " · "
+# (coordinator.unisci_esito_e_note): «Comando eseguito… ✅ · Sedile guida riscaldato OFF:
+# questa funzione non è autorizzata…». Each piece is translated on its own, and a piece of
+# the form «<command name>: <sentence>» has its sentence looked up on its own too.
+_SEP = " · "
+
+# The pre-send warnings of core/permessi.py and core/commands.py (exact sentences).
+NOTES: dict[str, str] = {
+    "questa auto non autorizza il comando unico: ricomposto in un'unica richiesta al clima":
+        "this car does not allow the combined command: sent as one climate request instead",
+    "il costruttore non autorizza affatto questa funzione su questa auto: "
+    "nessun adattamento può farla passare":
+        "the manufacturer does not allow this function on this car at all: "
+        "nothing the integration changes can get it through",
+    "questa auto non autorizza il cuore di questa richiesta: il rifiuto che sta "
+    "per arrivare non dipende dall'integrazione":
+        "this car does not allow the core of this request: the refusal that follows is not "
+        "caused by the integration",
+    "questa funzione non è autorizzata sulla sua via abituale su questo veicolo: "
+    "inviata tramite il clima, che quindi si accende insieme a lei":
+        "this function is not allowed by its usual route on this car: sent through the "
+        "climate control, which turns on with it",
+    "questa funzione non è autorizzata sulla sua via abituale su questo veicolo: "
+    "inviata tramite il clima, che quindi si spegne insieme a lei":
+        "this function is not allowed by its usual route on this car: sent through the "
+        "climate control, which turns off with it",
+    "questa auto non autorizza il ciclo di tutti i giorni per questa programmazione":
+        "this car does not allow an every-day cycle for this schedule",
+    "questa auto non autorizza il ciclo su giorni scelti per questa programmazione":
+        "this car does not allow a chosen-days cycle for this schedule",
+}
+
+# core/commands.py NOMI_CAMPO: the parts skipped because the car does not allow them.
+FIELD_NAMES: dict[str, str] = {
+    "volante": "steering wheel", "parabrezza": "windscreen", "lunotto": "rear window",
+    "purificatore": "air purifier", "disappannamento": "demist",
+    "sedile guida": "driver seat", "sedile passeggero": "passenger seat",
+    "sedile post. SX": "rear left seat", "sedile post. DX": "rear right seat",
+    "aria sedile guida": "driver seat ventilation",
+    "aria sedile passeggero": "passenger seat ventilation",
+    "aria sedile post. SX": "rear left seat ventilation",
+    "aria sedile post. DX": "rear right seat ventilation",
+}
+_SKIPPED = re.compile(r"^non autorizzate su questa auto, salto (.+)$", re.S)
+_IN_LOG = re.compile(r"^\(\+(\d+) nel registro\)$")
+# Bilingual already (switch.py): keep only the English half.
+_BILINGUAL = re.compile(r"^Sveglio l'auto: il comando parte fra ~\d+ s · (Waking the car: .*)$",
+                        re.S)
+
+
+def _sentence(text: str):
+    """English for one whole sentence, or None if it is not listed."""
     exact = EXACT.get(text)
+    if exact is None:
+        exact = NOTES.get(text)
     if exact is not None:
         return exact
     for rx, en in PATTERNS:
         m = rx.match(text)
         if m:
             return _fragments(m.expand(en))
+    m = _SKIPPED.match(text)
+    if m:
+        names = ", ".join(FIELD_NAMES.get(n.strip(), n.strip()) for n in m.group(1).split(","))
+        return f"not allowed on this car, skipping {names}"
+    m = _IN_LOG.match(text)
+    if m:
+        return f"(+{m.group(1)} more in the log)"
+    return None
+
+
+def _piece(text: str) -> str:
+    whole = _sentence(text)
+    if whole is not None:
+        return whole
+    # «<command name>: <sentence>»: the name through the fragments, the sentence on its own.
+    if ": " in text:
+        head, tail = text.split(": ", 1)
+        rest = _sentence(tail)
+        if rest is not None:
+            return f"{_fragments(head)}: {rest}"
     return _fragments(text)
+
+
+def to_english(text):
+    """The English for a status sentence, or the sentence unchanged if it is not listed."""
+    if not isinstance(text, str) or not text:
+        return text
+    m = _BILINGUAL.match(text)
+    if m:
+        return m.group(1)
+    whole = _sentence(text)
+    if whole is not None:
+        return whole
+    if _SEP not in text:
+        return _piece(text)
+    # the bilingual "skipped" tail spans two pieces: settle it before splitting
+    for rx, en in FRAGMENT_PATTERNS:
+        text = rx.sub(en, text)
+    return _SEP.join(_piece(p) for p in text.split(_SEP))
 
 
 def value_to_english(value):
